@@ -1311,11 +1311,10 @@ class ClassObject(object):
                (h['COMPPOSA']%180 > posang[0] and
                 h['COMPPOSA']%180 < posang[1]
                 if posang is not None and len(posang)==2
-                else True) and
-               (h['XVER'] > 0 if not include_old_versions else True)
+                else True)
                for h in self.headers
               ]
-
+# (h['XVER'] > 0 if not include_old_versions else True)
         return [ii for ii,k in enumerate(sel) if k]
 
     def get_spectra(self, progressbar=True, **kwargs):
@@ -1461,7 +1460,7 @@ def make_axis(header,imagfreq=False):
 
 @print_timing
 def class_to_obsblocks(filename, telescope, line, datatuple=None, source=None,
-                       imagfreq=False, DEBUG=False,  **kwargs):
+                       imagfreq=False,  **kwargs):
     """
     Load an entire CLASS observing session into a list of ObsBlocks based on
     matches to the 'telescope', 'line' and 'source' names
@@ -1480,7 +1479,7 @@ def class_to_obsblocks(filename, telescope, line, datatuple=None, source=None,
         Create a SpectroscopicAxis with the image frequency.
     """
     if datatuple is None:
-        spectra,header,indexes = read_class(filename,DEBUG=DEBUG, **kwargs)
+        spectra,header,indexes = read_class(filename, **kwargs)
     else:
         spectra,header,indexes = datatuple
 
