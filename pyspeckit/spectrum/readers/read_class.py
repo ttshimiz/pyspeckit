@@ -88,6 +88,7 @@ header_id_numbers = {0: 'USER CODE',
                      -4: 'SPECTRO',
                      -5: 'BASELINE',
                      -6: 'HISTORY',
+                     -7: 'UNKNOWN-APEX',
                     # -8: 'SWITCH',
                      -10: 'DRIFT',
                      -14: 'CALIBRATION',
@@ -1415,12 +1416,29 @@ def read_class(filename, downsample_factor=None, sourcename=None,
         headers = [downsample_header(h, downsample_factor)
                    for h in ProgressBar(headers)]
 
+    for hdr in headers:
+        stringify_header(hdr)
+
     return spectra,headers,indexes
+
+def stringify_header(header):
+    from astropy.extern.six import string_types, integer_types
+    import string
+    FITS_allowed_types = (string_types + integer_types +
+                          (float, complex, bool, np.floating, np.integer,
+                           np.complexfloating, np.bool_))
+    bad_chars = string.printable[96:]
+    badcharre = re.compile("[{0}]".format(bad_chars))
+    for key, value in header.items():
+        if isinstance(value, bytes):
+            header[key] = value.decode()
+        elif not isinstance(value, FITS_allowed_types):
+            header[key] = badcharre.sub("", str(header[key]))
 
 def downsample_header(hdr, downsample_factor):
     for k in ('NCHAN','NPOIN','DATALEN'):
         if k in hdr:
-            hdr[k] = hdr[k] / downsample_factor
+            hdr[k] = int((hdr[k] / downsample_factor))
     # maybe wrong? h['RCHAN'] = (h['RCHAN']-1) / downsample_factor + 1
     scalefactor = 1./downsample_factor
     hdr['RCHAN'] = (hdr['RCHAN']-1)*scalefactor + 0.5 + scalefactor/2.

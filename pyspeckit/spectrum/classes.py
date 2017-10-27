@@ -42,11 +42,12 @@ try:
 except ImportError:
     atpyOK = False
 
-try:
-    import specutils
-    specutilsOK = True
-except ImportError:
-    specutilsOK = False
+# specutils -> legacy specutils
+# try:
+#     import specutils
+#     specutilsOK = True
+# except ImportError:
+#     specutilsOK = False
 
 
 try:
@@ -195,6 +196,12 @@ class BaseSpectrum(object):
             self.unit = str(self.data.unit)
             self.data = self.data.value
 
+        if hasattr(self.error, 'unit'):
+            # errors have to have the same units as data, but then should be
+            # converted to arrays.  Long term, we'd like to have everything
+            # be treated internally as a Quantity, but... not yet.
+            self.error = self.error.to(self.unit).value
+
         if maskdata:
             if hasattr(self.data,'mask'):
                 self.data.mask += np.isnan(self.data) + np.isinf(self.data)
@@ -241,6 +248,25 @@ class BaseSpectrum(object):
     def units(self, value):
         log.warning("'units' is deprecated; please use 'unit'", DeprecationWarning)
         self._unit = value
+
+    @property
+    def data_quantity(self):
+        return u.Quantity(self.data, unit=self.unit)
+
+    @data_quantity.setter
+    def data_quantity(self, value):
+        if not hasattr(value, 'unit'):
+            raise ValueError("To set the data to a Quantity value, it must "
+                             "have a unit.")
+        if hasattr(self.data, 'mask') and not hasattr(value, 'mask'):
+            raise ValueError("The original data had a mask.  You must use "
+                             "a masked array to set the data value.")
+        self.data = value.value
+        self.unit = value.unit
+
+    @property
+    def error_quantity(self):
+        return u.Quantity(self.error, unit=self.unit)
 
     def _register_fitters(self, registry=None):
         """
@@ -312,7 +338,8 @@ class BaseSpectrum(object):
         else:
             warn("Warning: Invalid xtype in text header - this may mean no "
                  "text header was available.  X-axis units will be pixels "
-                 "unless you set them manually (e.g., sp.xarr.unit='angstroms')")
+                 "unless you set them manually "
+                 "(e.g., sp.xarr=SpectroscopicAxis(sp.xarr.value, unit='angstroms')")
             self.xarr.xtype = 'pixels'
             self.xarr.set_unit(u.pixel)
             #raise ValueError("Invalid xtype in text header")
@@ -880,6 +907,18 @@ class Spectra(BaseSpectrum):
 
         if xunit is None:
             xunit = speclist[0].xarr.unit
+        else:
+            xunit = u.Unit(xunit)
+
+        if xunit is not None and xunit.is_equivalent(u.km/u.s):
+            refX = speclist[0].xarr.refX
+            if refX is None:
+                warn("Combining spectra with velocity coordinates, "
+                     "but refX is None")
+            for spec in speclist[1:]:
+                if spec.xarr.refX != refX:
+                    raise ValueError("When combining spectra in velocity coordinates, "
+                                     "they must have the same reference frequency.")
 
         log.info("Concatenating data")
 
@@ -940,7 +979,7 @@ class Spectra(BaseSpectrum):
 
         if other.xarr.unit != self.xarr.unit:
             # convert all inputs to same unit
-            other.xarr.convert_to_units(self.xarr.unit)
+            other.xarr.convert_to_unit(self.xarr.unit)
         self.xarr = units.SpectroscopicAxes([self.xarr,other.xarr])
         self.data = np.concatenate([self.data,other.data])
         self.error = np.concatenate([self.error,other.error])

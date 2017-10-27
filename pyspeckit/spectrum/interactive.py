@@ -113,14 +113,14 @@ class Interactive(object):
             if button in ('p','P','1',1,'i','a'): # p for... parea?  a for area.  i for include
                 # button one is always region selection
                 #DEBUG print("Button is {0}".format(button))
-                self.selectregion_interactive(event,debug=debug)
+                self._selectregion_interactive(event,debug=debug)
             elif button in ('c','C'):
                 self.clear_highlights()
                 self.clear_all_connections()
                 self.Spectrum.plotter()
             elif button in ('e','x','E','X'): # e for exclude, x for x-clude
                 # exclude/delete/remove
-                self.selectregion_interactive(event, mark_include=False, debug=debug)
+                self._selectregion_interactive(event, mark_include=False, debug=debug)
             elif button in ('m','M','2',2): # m for mark
                 if debug or self._debug: log.debug("Button 2 action")
                 self.button2action(event,debug=debug,nwidths=nwidths)
@@ -144,7 +144,7 @@ class Interactive(object):
                                                                                    toolmode))
 
 
-    def selectregion_interactive(self, event, mark_include=True, debug=False, **kwargs):
+    def _selectregion_interactive(self, event, mark_include=True, debug=False, **kwargs):
         """
         select regions for baseline fitting
         """
@@ -421,6 +421,15 @@ class Interactive(object):
         if debug or self._debug:
             log.info("".join(map(str, ("selectregion kwargs: ",kwargs," use_window_limits: ",use_window_limits," reset: ",reset," xmin: ",xmin, " xmax: ",xmax))))
 
+        if reset:
+            if verbose or debug or self._debug:
+                print("Resetting xmin/xmax to full limits of data")
+            self.xmin = 0
+            # End-inclusive!
+            self.xmax = self.Spectrum.data.shape[0]
+            self.includemask[self.xmin:self.xmax] = True
+            #raise ValueError("Need to input xmin and xmax, or have them set by plotter, for selectregion.")
+
         if xmin is not None and xmax is not None:
             if verbose or debug or self._debug:
                 log.info("Setting xmin,xmax from keywords %g,%g" % (xmin,xmax))
@@ -433,20 +442,15 @@ class Interactive(object):
                 # NOT end-inclusive!  This is PYTHON indexing
                 self.xmax = xmax
             self.includemask[self.xmin:self.xmax] = True
-        elif reset:
-            if verbose or debug or self._debug: print("Resetting xmin/xmax to full limits of data")
-            self.xmin = 0
-            # End-inclusive!
-            self.xmax = self.Spectrum.data.shape[0]
-            self.includemask[self.xmin:self.xmax] = True
-            #raise ValueError("Need to input xmin and xmax, or have them set by plotter, for selectregion.")
-        elif self.Spectrum.plotter.xmin is not None and self.Spectrum.plotter.xmax is not None and fit_plotted_area:
+        elif (self.Spectrum.plotter.xmin is not None and
+              self.Spectrum.plotter.xmax is not None and fit_plotted_area):
             if use_window_limits or (use_window_limits is None and self.use_window_limits):
-                if debug or self._debug: print("Resetting plotter xmin,xmax and ymin,ymax to the currently visible region")
+                if debug or self._debug:
+                    print("Resetting plotter xmin,xmax and ymin,ymax to the currently visible region")
                 self.Spectrum.plotter.set_limits_from_visible_window(debug=debug)
             self.xmin = numpy.floor(self.Spectrum.xarr.x_to_pix(self.Spectrum.plotter.xmin))
             self.xmax = numpy.ceil(self.Spectrum.xarr.x_to_pix(self.Spectrum.plotter.xmax))
-            if self.xmin>self.xmax: 
+            if self.xmin>self.xmax:
                 self.xmin,self.xmax = self.xmax,self.xmin
             # End-inclusive!  Note that this must be done after the min/max swap!
             # this feels sketchy to me, but if you don't do this the plot will not be edge-inclusive
@@ -482,7 +486,9 @@ class Interactive(object):
 
         # Exclude keyword-specified excludes.  Assumes exclusion in current X array units
         log.debug("Exclude: {0}".format(exclude))
-        if exclude is not None and len(exclude) % 2 == 0:
+        if exclude == 'interactive':
+            self.start_interactive()
+        elif exclude is not None and len(exclude) % 2 == 0:
             for x1,x2 in zip(exclude[::2],exclude[1::2]):
                 if xtype.lower() in ('wcs',) or xtype in units.xtype_dict:
                     x1 = self.Spectrum.xarr.x_to_pix(x1)
@@ -491,6 +497,8 @@ class Interactive(object):
                     # correct for order if WCS units are used
                     # if pixel units are being used, we assume the user has
                     # done so intentionally
+                    # TODO: if xarr, data go opposite directions, this swap
+                    # doesn't work.
                     if x1 > x2:
                         x1,x2 = x2,x1
                 log.debug("Exclusion pixels: {0} to {1}".format(x1,x2))

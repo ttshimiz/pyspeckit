@@ -25,6 +25,7 @@ import copy
 import itertools
 from ..specwarnings import warn,PyspeckitWarning
 
+import astropy
 from astropy.io import fits
 from astropy import log
 from astropy import wcs
@@ -156,7 +157,7 @@ class Cube(spectrum.Spectrum):
             self.header = header
             self.error = None
             if self.cube is not None:
-                self.data = self.cube[:,y0,x0]
+                self.data = self.cube[:,int(y0),int(x0)]
 
         if not hasattr(self, '_unit'):
             self.unit = units.dimensionless_unscaled
@@ -363,9 +364,9 @@ class Cube(spectrum.Spectrum):
                     maskmap=self.maskmap[indx[1:]] if self.maskmap is not None else None)
 
     def set_spectrum(self, x, y):
-        self.data = self.cube[:,y,x]
+        self.data = self.cube[:,int(y),int(x)]
         if self.errorcube is not None:
-            self.error = self.errorcube[:,y,x]
+            self.error = self.errorcube[:,int(y),int(x)]
 
     def plot_spectrum(self, x, y, plot_fit=False, **kwargs):
         """
@@ -418,19 +419,19 @@ class Cube(spectrum.Spectrum):
             # this is already handled in plot_spectrum
             return
 
-        self.specfit.modelpars = self.parcube[:,y,x]
+        self.specfit.modelpars = self.parcube[:,int(y),int(x)]
         self.specfit.npeaks = self.specfit.fitter.npeaks
         self.specfit.model = self.specfit.fitter.n_modelfunc(self.specfit.modelpars,
                                                              **self.specfit.fitter.modelfunc_kwargs)(self.xarr)
 
         # set the parinfo values correctly for annotations
-        self.specfit.parinfo.values = self.parcube[:,y,x]
-        self.specfit.parinfo.errors = self.errcube[:,y,x]
-        self.specfit.fitter.parinfo.values = self.parcube[:,y,x]
-        self.specfit.fitter.parinfo.errors = self.errcube[:,y,x]
+        self.specfit.parinfo.values = self.parcube[:,int(y),int(x)]
+        self.specfit.parinfo.errors = self.errcube[:,int(y),int(x)]
+        self.specfit.fitter.parinfo.values = self.parcube[:,int(y),int(x)]
+        self.specfit.fitter.parinfo.errors = self.errcube[:,int(y),int(x)]
         #for pi,p,e in zip(self.specfit.parinfo,
         #                  self.specfit.modelpars,
-        #                  self.errcube[:,y,x]):
+        #                  self.errcube[:,int(y),int(x)]):
         #    try:
         #        pi['value'] = p
         #        pi['error'] = e
@@ -491,8 +492,8 @@ class Cube(spectrum.Spectrum):
                                             if ct in self.header else
                                             'CAR'))
 
-        sp = spectrum.Spectrum(xarr=self.xarr.copy(), data=self.cube[:,y,x],
-                               header=header, error=(self.errorcube[:,y,x] if
+        sp = spectrum.Spectrum(xarr=self.xarr.copy(), data=self.cube[:,int(y),int(x)],
+                               header=header, error=(self.errorcube[:,int(y),int(x)] if
                                                      self.errorcube is not None
                                                      else None),
                                unit=self.unit,
@@ -505,10 +506,10 @@ class Cube(spectrum.Spectrum):
         sp.specfit.Spectrum = sp
 
         if hasattr(self,'parcube'):
-            sp.specfit.modelpars = self.parcube[:,y,x]
+            sp.specfit.modelpars = self.parcube[:,int(y),int(x)]
             if hasattr(self.specfit,'parinfo') and self.specfit.parinfo is not None:
                 # set the parinfo values correctly for annotations
-                for pi,p,e in zip(sp.specfit.parinfo, sp.specfit.modelpars, self.errcube[:,y,x]):
+                for pi,p,e in zip(sp.specfit.parinfo, sp.specfit.modelpars, self.errcube[:,int(y),int(x)]):
                     try:
                         pi['value'] = p
                         pi['error'] = e
@@ -607,7 +608,7 @@ class Cube(spectrum.Spectrum):
             self.data = cubes.extract_aperture(self.cube, aperture,
                                                coordsys=None, method=method)
 
-    def get_modelcube(self, update=False):
+    def get_modelcube(self, update=False, multicore=1):
         """
         Return or generate a "model cube", which will have the same shape as
         the ``.cube`` but will have spectra generated from the fitted model.
@@ -619,17 +620,36 @@ class Cube(spectrum.Spectrum):
         update : bool
             If the cube has already been computed, set this to ``True`` to
             recompute the model.
+        multicore: int
+            if >1, try to use multiprocessing via parallel_map to run on multiple cores
         """
         if self._modelcube is None or update:
             yy,xx = np.indices(self.parcube.shape[1:])
             nanvals = np.any(~np.isfinite(self.parcube),axis=0)
             isvalid = np.any(self.parcube, axis=0) & ~nanvals
+            valid_pixels = zip(xx[isvalid], yy[isvalid])
             self._modelcube = np.full_like(self.cube, np.nan)
-            # progressbar doesn't work with zip; I'm therefore giving up on
-            # "efficiency" in memory by making a list here.
-            for x,y in ProgressBar(list(zip(xx[isvalid],
-                                            yy[isvalid]))):
+
+            def model_a_pixel(xy):
+                x,y = int(xy[0]), int(xy[1])
                 self._modelcube[:,y,x] = self.specfit.get_full_model(pars=self.parcube[:,y,x])
+                return ((x,y), self._modelcube[:,y,x])
+
+            if multicore > 1:
+                sequence = [(x,y) for x,y in valid_pixels]
+                result = parallel_map(model_a_pixel, sequence, numcores=multicore)
+                merged_result = [core_result for core_result in result
+                                 if core_result is not None]
+                for mr in merged_result:
+                    ((x,y), model) = mr
+                    x = int(x)
+                    y = int(y)
+                    self._modelcube[:,y,x] = model
+            else:
+                # progressbar doesn't work with zip; I'm therefore giving up on
+                # "efficiency" in memory by making a list here.
+                for xy in ProgressBar(list(valid_pixels)):
+                    model_a_pixel(xy)
 
         return self._modelcube
 
@@ -686,6 +706,10 @@ class Cube(spectrum.Spectrum):
         blank_value: float
             Value to replace non-fitted locations with.  A good alternative is
             numpy.nan
+        errmap: ndarray[naxis=2] or ndarray[naxis=3]
+            A map of errors used for the individual pixels of the spectral
+            cube. 2D errmap results in an equal weighting of each given
+            spectrum, while a 3D array sets individual weights of each channel
         verbose: bool
         verbose_level: int
             Controls how much is output.
@@ -739,6 +763,7 @@ class Cube(spectrum.Spectrum):
             bad = np.isnan(guesses).sum(axis=0).astype('bool')
             OK &= (~bad)
 
+        log.info("Fitting up to {0} spectra".format(OK.sum()))
 
         if start_from_point == 'center':
             start_from_point = (xx.max()/2., yy.max()/2.)
@@ -812,7 +837,16 @@ class Cube(spectrum.Spectrum):
             if errspec is not None:
                 sp.error = errspec
             elif errmap is not None:
-                sp.error = np.ones(sp.data.shape) * errmap[y,x]
+                if self.errorcube is not None:
+                    raise ValueError("Either the 'errmap' argument or"
+                                     " self.errorcube attribute should be"
+                                     " specified, but not both.")
+                if errmap.shape == self.cube.shape[1:]:
+                    sp.error = np.ones(sp.data.shape) * errmap[int(y),int(x)]
+                elif errmap.shape == self.cube.shape:
+                    sp.error = errmap[:, int(y), int(x)]
+            elif self.errorcube is not None:
+                sp.error = self.errorcube[:, int(y), int(x)]
             else:
                 if ii==0:
                     # issue the warning only once (ii==0), but always issue
@@ -826,7 +860,7 @@ class Cube(spectrum.Spectrum):
                                 "not be possible.  Please raise an Issue.")
             if signal_cut > 0 and not all(sp.error == 0):
                 if continuum_map is not None:
-                    snr = (sp.data-continuum_map[y,x]) / sp.error
+                    snr = (sp.data-continuum_map[int(y),int(x)]) / sp.error
                 else:
                     snr = sp.data / sp.error
                 if absorption:
@@ -874,15 +908,15 @@ class Cube(spectrum.Spectrum):
                              "was set to True.", PyspeckitWarning)
                 if verbose_level > 1 and ii == 0:
                     log.info("Using moment cube")
-                gg = self.momentcube[:,y,x]
+                gg = self.momentcube[:,int(y),int(x)]
             elif hasattr(guesses,'shape') and guesses.shape[1:] == self.cube.shape[1:]:
                 if verbose_level > 1 and ii == 0:
                     log.info("Using input guess cube")
-                gg = guesses[:,y,x]
+                gg = guesses[:,int(y),int(x)]
             elif isinstance(guesses, dict):
                 if verbose_level > 1 and ii == 0:
                     log.info("Using input guess dict")
-                gg = guesses[(y,x)]
+                gg = guesses[(int(y),int(x))]
             else:
                 if verbose_level > 1 and ii == 0:
                     log.info("Using input guess")
@@ -892,8 +926,8 @@ class Cube(spectrum.Spectrum):
                 try:
                     sp.specfit(guesses=gg, quiet=verbose_level<=3,
                                verbose=verbose_level>3, **fitkwargs)
-                    self.parcube[:,y,x] = sp.specfit.modelpars
-                    self.errcube[:,y,x] = sp.specfit.modelerrs
+                    self.parcube[:,int(y),int(x)] = sp.specfit.modelpars
+                    self.errcube[:,int(y),int(x)] = sp.specfit.modelerrs
                     success = True
                 except Exception as ex:
                     exc_traceback = sys.exc_info()[2]
@@ -910,15 +944,15 @@ class Cube(spectrum.Spectrum):
 
                 # keep this out of the 'try' statement
                 if integral and success:
-                    self.integralmap[:,y,x] = sp.specfit.integral(direct=direct_integral,
+                    self.integralmap[:,int(y),int(x)] = sp.specfit.integral(direct=direct_integral,
                                                                   return_error=True)
-                self.has_fit[y,x] = success
+                self.has_fit[int(y),int(x)] = success
             else:
-                self.has_fit[y,x] = False
-                self.parcube[:,y,x] = blank_value
-                self.errcube[:,y,x] = blank_value
+                self.has_fit[int(y),int(x)] = False
+                self.parcube[:,int(y),int(x)] = blank_value
+                self.errcube[:,int(y),int(x)] = blank_value
                 if integral:
-                    self.integralmap[:,y,x] = blank_value
+                    self.integralmap[:,int(y),int(x)] = blank_value
 
 
             if blank_value != 0:
@@ -942,7 +976,7 @@ class Cube(spectrum.Spectrum):
 
             if integral:
                 return ((x,y), sp.specfit.modelpars, sp.specfit.modelerrs,
-                        self.integralmap[:,y,x])
+                        self.integralmap[:,int(y),int(x)])
             else:
                 return ((x,y), sp.specfit.modelpars, sp.specfit.modelerrs)
         #### BEGIN TEST BLOCK ####
@@ -976,9 +1010,9 @@ class Cube(spectrum.Spectrum):
         # this reproduced code is needed because the functional wrapping
         # required for the multicore case prevents gg from being set earlier
         if usemomentcube or guesses_are_moments:
-            gg = self.momentcube[:,y,x]
+            gg = self.momentcube[:,int(y),int(x)]
         elif hasattr(guesses,'shape') and guesses.shape[1:] == self.cube.shape[1:]:
-            gg = guesses[:,y,x]
+            gg = guesses[:,int(y),int(x)]
         else:
             gg = guesses
 
@@ -989,7 +1023,7 @@ class Cube(spectrum.Spectrum):
         if prevalidate_guesses:
             if guesses.ndim == 3:
                 for ii,(x,y) in ProgressBar(tuple(enumerate(valid_pixels))):
-                    pinf, _ = sp.specfit.fitter._make_parinfo(parvalues=guesses[:,y,x], **fitkwargs)
+                    pinf, _ = sp.specfit.fitter._make_parinfo(parvalues=guesses[:,int(y),int(x)], **fitkwargs)
                     sp.specfit._validate_parinfo(pinf, 'raise')
             else:
                 pinf, _ = sp.specfit.fitter._make_parinfo(parvalues=guesses, **fitkwargs)
@@ -1045,15 +1079,15 @@ class Cube(spectrum.Spectrum):
                                      " error shape don't match that of the "
                                      "parameter cubes")
                 if np.any(np.isnan(modelpars)) or np.any(np.isnan(modelerrs)):
-                    self.parcube[:,y,x] = np.nan
-                    self.errcube[:,y,x] = np.nan
-                    self.has_fit[y,x] = False
+                    self.parcube[:,int(y),int(x)] = np.nan
+                    self.errcube[:,int(y),int(x)] = np.nan
+                    self.has_fit[int(y),int(x)] = False
                 else:
-                    self.parcube[:,y,x] = modelpars
-                    self.errcube[:,y,x] = modelerrs
-                    self.has_fit[y,x] = max(modelpars) > 0
+                    self.parcube[:,int(y),int(x)] = modelpars
+                    self.errcube[:,int(y),int(x)] = modelerrs
+                    self.has_fit[int(y),int(x)] = max(modelpars) > 0
                 if integral:
-                    self.integralmap[:,y,x] = intgl
+                    self.integralmap[:,int(y),int(x)] = intgl
         else:
             for ii,(x,y) in enumerate(valid_pixels):
                 fit_a_pixel((ii,x,y))
@@ -1105,31 +1139,30 @@ class Cube(spectrum.Spectrum):
         def moment_a_pixel(iixy):
             ii,x,y = iixy
             sp = self.get_spectrum(x,y)
-            self.momentcube[:,y,x] = sp.moments(**kwargs)
+            self.momentcube[:,int(y),int(x)] = sp.moments(**kwargs)
             if verbose:
                 if ii % 10**(3-verbose_level) == 0:
                     log.info("Finished moment %i.  "
                              "Elapsed time is %0.1f seconds" % (ii, time.time()-t0))
 
-            return ((x,y), self.momentcube[:,y,x])
+            return ((x,y), self.momentcube[:,int(y),int(x)])
 
         if multicore > 1:
             sequence = [(ii,x,y) for ii,(x,y) in tuple(enumerate(valid_pixels))]
             result = parallel_map(moment_a_pixel, sequence, numcores=multicore)
-            merged_result = [core_result
+            merged_result = [core_result.tolist()
                              for core_result in result
                              if core_result is not None]
-            for mr in merged_result:
-                for TEMP in mr:
-                    ((x,y), moments) = TEMP
-                    self.momentcube[:,y,x] = moments
+            for TEMP in merged_result:
+                ((x,y), moments) = TEMP
+                self.momentcube[:,int(y),int(x)] = moments
         else:
             for ii,(x,y) in enumerate(valid_pixels):
                 moment_a_pixel((ii,x,y))
 
         if verbose:
             log.info("Finished final moment %i.  "
-                     "Elapsed time was %0.1f seconds" % (ii+1, time.time()-t0))
+                     "Elapsed time was %0.1f seconds" % (OK.sum(), time.time()-t0))
 
     def show_moment(self, momentnumber, **kwargs):
         """
@@ -1216,8 +1249,8 @@ class Cube(spectrum.Spectrum):
         nanvals = ~np.isfinite(self.parcube)
         nanvals_flat = np.any(nanvals, axis=0)
         if np.any(nanvals):
-            log.warn("NaN or infinite values encountered in parameter cube.  ",
-                     PyspeckitWarning)
+            warn("NaN or infinite values encountered in parameter cube.",
+                 PyspeckitWarning)
             
 
         # make sure params are within limits
@@ -1227,7 +1260,7 @@ class Cube(spectrum.Spectrum):
         try:
             x,y = _temp_fit_loc
             sp = self.get_spectrum(x,y)
-            guesses.values = self.parcube[:,y,x]
+            guesses.values = self.parcube[:,int(y),int(x)]
             sp.specfit(fittype=fittype, guesses=guesses.values)
         except Exception as ex1:
             try:
@@ -1235,7 +1268,7 @@ class Cube(spectrum.Spectrum):
                 whereOK = np.where(OKmask)
                 x,y = whereOK[1][0],whereOK[0][0]
                 sp = self.get_spectrum(x,y)
-                guesses.values = self.parcube[:,y,x]
+                guesses.values = self.parcube[:,int(y),int(x)]
                 sp.specfit(fittype=fittype, guesses=guesses.values)
             except Exception as ex2:
                 log.error("Fitting the pixel at location {0} failed with error: {1}.  "
@@ -1281,7 +1314,7 @@ class Cube(spectrum.Spectrum):
             history.write_history(self.header,"SMOOTH: Changed CDELT3 from %f to %f" % (self.header.get('CRPIX3')/float(factor),self.header.get('CRPIX3')))
 
 
-    def write_fit(self, fitcubefilename, clobber=False):
+    def write_fit(self, fitcubefilename, overwrite=False):
         """
         Write out a fit cube containing the ``.parcube`` and ``.errcube`` using
         the information in the fit's parinfo to set the header keywords.  The
@@ -1300,7 +1333,7 @@ class Cube(spectrum.Spectrum):
         ----------
         fitcubefilename: string
             Filename to write to
-        clobber: bool
+        overwrite: bool
             Overwrite file if it exists?
         """
 
@@ -1332,7 +1365,10 @@ class Cube(spectrum.Spectrum):
             log.exception("Make sure you run the cube fitter first.")
             return
 
-        fitcubefile.writeto(fitcubefilename, clobber=clobber)
+        if astropy.version.major >= 2 or (astropy.version.major==1 and astropy.version.minor>=3):
+            fitcubefile.writeto(fitcubefilename, overwrite=overwrite)
+        else:
+            fitcubefile.writeto(fitcubefilename, clobber=overwrite)
 
     def write_cube(self):
         raise NotImplementedError
@@ -1385,8 +1421,8 @@ class CubeStack(Cube):
                 # techically that's alright
                 pass
         self._sort()
-        self.data = self.cube[:,y0,x0]
-        self.error = self.errorcube[:,y0,x0] if self.errorcube is not None else None
+        self.data = self.cube[:,int(y0),int(x0)]
+        self.error = self.errorcube[:,int(y0),int(x0)] if self.errorcube is not None else None
 
         self.header = cubelist[0].header.copy()
         for cube in cubelist:
