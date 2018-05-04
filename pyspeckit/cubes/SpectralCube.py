@@ -817,6 +817,8 @@ class Cube(spectrum.Spectrum):
 
         self._counter = 0
 
+        self._tracebacks = {}
+
         t0 = time.time()
 
         def fit_a_pixel(iixy):
@@ -931,6 +933,7 @@ class Cube(spectrum.Spectrum):
                     success = True
                 except Exception as ex:
                     exc_traceback = sys.exc_info()[2]
+                    self.tracebacks[(ii,x,y)] = exc_traceback
                     log.exception("Fit number %i at %i,%i failed on error %s" % (ii,x,y, str(ex)))
                     log.exception("Failure was in file {0} at line {1}".format(
                         exc_traceback.tb_frame.f_code.co_filename,
@@ -983,7 +986,10 @@ class Cube(spectrum.Spectrum):
         # This test block is to make sure you don't run a 30 hour fitting
         # session that's just going to crash at the end.
         # try a first fit for exception-catching
-        try0 = fit_a_pixel((0,valid_pixels[0][0],valid_pixels[0][1]))
+        if len(start_from_point) == 2:
+            try0 = fit_a_pixel((0,start_from_point[0], start_from_point[1]))
+        else:
+            try0 = fit_a_pixel((0,valid_pixels[0][0],valid_pixels[0][1]))
         try:
             len_guesses = len(self.momentcube) if (usemomentcube or
                                 guesses_are_moments) else len(guesses)

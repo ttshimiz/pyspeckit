@@ -17,7 +17,6 @@ so it is possible to make publication-quality plots.
 """
 from __future__ import print_function
 import matplotlib
-import matplotlib.pyplot
 import matplotlib.figure
 import numpy as np
 import copy
@@ -54,11 +53,14 @@ class MapPlotter(object):
         """
         Create a map figure for future plotting
         """
+        import matplotlib.pyplot
+        self._pyplot = matplotlib.pyplot
+
         # figure out where to put the plot
         if isinstance(figure,matplotlib.figure.Figure):
             self.figure = figure
         elif type(figure) is int:
-            self.figure = matplotlib.pyplot.figure(figure)
+            self.figure = self._pyplot.figure(figure)
         else:
             self.figure = None
         self.axis = None
@@ -130,9 +132,9 @@ class MapPlotter(object):
             Allow mapplot in subfigure
         """
         if (self.figure is None):
-            self.figure = matplotlib.pyplot.figure()
-        elif (not matplotlib.pyplot.fignum_exists(self.figure.number)):
-            self.figure = matplotlib.pyplot.figure()
+            self.figure = self._pyplot.figure()
+        elif (not self._pyplot.fignum_exists(self.figure.number)):
+            self.figure = self._pyplot.figure()
         else:
             self._disconnect()
             self.figure.clf()
@@ -172,7 +174,7 @@ class MapPlotter(object):
             self.axis.imshow(self.plane, vmin=vmin, vmax=vmax, cmap=cmap, **plotkwargs)
             if colorbar:
                 try:
-                    self.colorbar = matplotlib.pyplot.colorbar(self.axis.images[0])
+                    self.colorbar = self._pyplot.colorbar(self.axis.images[0])
                 except Exception as ex:
                     print("ERROR: Could not create colorbar!  Error was %s" % str(ex))
             self._origin = 0 # normal convention
@@ -273,7 +275,7 @@ class MapPlotter(object):
                 elif event.key == 'o':
                     clickX,clickY = round(clickX),round(clickY)
                     print("OverPlotting spectrum from point %i,%i" % (clickX-1,clickY-1))
-                    color=self.overplot_colorcycle.next()
+                    color = next(self.overplot_colorcycle)
                     self._add_click_mark(clickX,clickY,clear=False, color=color)
                     self.Cube.plot_spectrum(clickX-1,clickY-1,clear=False, color=color, linestyle=self.overplot_linestyle)
                 elif event.key in ('1','2'):
@@ -288,7 +290,7 @@ class MapPlotter(object):
                     color = 'k'
                     linestyle = 'steps-mid'
                 else:
-                    color = self.overplot_colorcycle.next()
+                    color = next(self.overplot_colorcycle)
                     linestyle = self.overplot_linestyle
                     clear=False
                 rad = ( (self._clickX-clickX)**2 + (self._clickY-clickY)**2 )**0.5
@@ -306,7 +308,7 @@ class MapPlotter(object):
                 elif event.button==2:
                     clickX,clickY = round(clickX),round(clickY)
                     print("OverPlotting spectrum from point %i,%i" % (clickX-1,clickY-1))
-                    color=self.overplot_colorcycle.next()
+                    color = next(self.overplot_colorcycle)
                     self._add_click_mark(clickX,clickY,clear=False, color=color)
                     self.Cube.plot_spectrum(clickX-1,clickY-1,clear=False, color=color, linestyle=self.overplot_linestyle)
                 elif event.button==3:

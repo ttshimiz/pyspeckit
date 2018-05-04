@@ -501,14 +501,14 @@ class BaseSpectrum(object):
         elif unit in ('pixel','pixels'):
             start_ind = start
         else:
-            start_ind = self.xarr.x_to_pix(start, xval_units=unit)
+            start_ind = self.xarr.x_to_pix(start, xval_unit=unit)
 
         if hasattr(stop, 'unit'):
             stop_ind = self.xarr.x_to_pix(stop)
         elif unit in ('pixel','pixels'):
             stop_ind = stop
         else:
-            stop_ind = self.xarr.x_to_pix(stop, xval_units=unit)
+            stop_ind = self.xarr.x_to_pix(stop, xval_unit=unit)
 
         if start_ind > stop_ind:
             start_ind,stop_ind = stop_ind,start_ind
@@ -618,10 +618,6 @@ class BaseSpectrum(object):
 
         Documentation from the :mod:`smooth` module:
 
-        Parameters
-        ----------
-        downsample: bool
-            Downsample the spectrum by the smoothing factor?
         """
         smooth = int(round(smooth))
         self.data = sm.smooth(self.data,smooth,downsample=downsample,**kwargs)
@@ -768,6 +764,7 @@ class BaseSpectrum(object):
         after checking for shape matching
         """
 
+
         def ofunc(self, other):
             if np.isscalar(other):
                 newspec = self.copy()
@@ -796,16 +793,24 @@ class BaseSpectrum(object):
                     raise ValueError("Shape mismatch in data")
                 elif not xarrcheck:
                     raise ValueError("X-axes do not match.")
+                else:
+                    raise Exception("Unexpected Error")
             elif hasattr(self,'shape') and hasattr(other,'shape'):
                 # allow array subtraction
                 if self.shape != other.shape:
                     raise ValueError("Shape mismatch in data")
-                elif hasattr(self,'xarr'):
+                elif hasattr(self, 'xarr'):
                     newspec = self.copy()
                     newspec.data = operation(newspec.data, other)
-                elif hasattr(other,'xarr'): # is this even possible?
+                    return newspec
+                elif hasattr(other, 'xarr'): # is this even possible?
                     newspec = other.copy()
                     newspec.data = operation(self, other.data)
+                    return newspec
+                else:
+                    raise ValueError("Data shapes match but somehow neither side is a Spectrum")
+            else:
+                raise ValueError("Data types are incompatible")
 
         return ofunc
 
